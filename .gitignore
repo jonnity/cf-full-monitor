@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Alchemy state (contains encrypted secrets)
+.alchemy/
+
+# Local secret files
+.env
+.dev.vars

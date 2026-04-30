@@ -1,0 +1,22 @@
+{
+  "name": "cf-full-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "tsx --env-file=.env infra/index.ts",
+    "destroy": "tsx --env-file=.env infra/index.ts --destroy",
+    "dev": "wrangler dev --test-scheduled",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.infra.json --noEmit"
+  },
+  "dependencies": {
+    "alchemy": "^0.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250430.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}
