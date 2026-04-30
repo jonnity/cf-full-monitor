@@ -148,3 +148,4 @@ vite.config.ts.timestamp-*
 # Local secret files
 .env
 .dev.vars
+.wrangler
