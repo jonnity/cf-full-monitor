@@ -12,35 +12,11 @@ function requireEnv(name: string): string {
   return value;
 }
 
-// Set cron triggers via CF Schedules API.
-// Alchemy's Worker resource does not expose this natively; we call it directly.
-async function setCronTriggers(
-  accountId: string,
-  apiToken: string,
-  scriptName: string,
-  crons: string[]
-): Promise<void> {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/schedules`;
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(crons.map((cron) => ({ cron }))),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Failed to set cron triggers: ${res.status} ${body}`);
-  }
-  console.log("Cron triggers registered:", crons.join(", "));
-}
-
 const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
 const apiToken = requireEnv("CLOUDFLARE_API_TOKEN");
 const isDestroy = process.argv.includes("--destroy");
 
-await using _app = alchemy("cf-full-monitor", {
+const app = await alchemy("cf-full-monitor", {
   phase: isDestroy ? "destroy" : "up",
   // Provide ALCHEMY_STATE_PASSWORD to encrypt secrets stored in .alchemy/ state files.
   password: process.env.ALCHEMY_STATE_PASSWORD,
@@ -49,6 +25,7 @@ await using _app = alchemy("cf-full-monitor", {
 await Worker("cf-full-monitor", {
   name: "cf-full-monitor",
   entrypoint: new URL("../src/index.ts", import.meta.url).pathname,
+  crons: CRONS,
   // Bindings: string → plain_text, alchemy.secret() → secret_text
   bindings: {
     TARGET_SCRIPT_NAME: "oogiri-doc-server",
@@ -59,6 +36,4 @@ await Worker("cf-full-monitor", {
   },
 });
 
-if (!isDestroy) {
-  await setCronTriggers(accountId, apiToken, "cf-full-monitor", CRONS);
-}
+await app.finalize();
