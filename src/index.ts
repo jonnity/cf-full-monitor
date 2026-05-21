@@ -1,5 +1,6 @@
 import type {
   Env,
+  EnvironmentConfig,
   GraphQLResponse,
   QueryData,
   R2OpsGroup,
@@ -197,12 +198,16 @@ function classifyR2Ops(groups: R2OpsGroup[]): {
   return { classAOps, classBOps };
 }
 
-async function collectMetrics(env: Env): Promise<MetricsResult> {
+async function collectMetrics(
+  accountId: string,
+  token: string,
+  envConfig: EnvironmentConfig
+): Promise<MetricsResult> {
   const times = buildTimeRange();
   const variables = {
-    accountId: env.CLOUDFLARE_ACCOUNT_ID,
-    scriptName: env.TARGET_SCRIPT_NAME,
-    dbId: env.TARGET_D1_DB_ID,
+    accountId,
+    scriptName: envConfig.scriptName,
+    dbId: envConfig.d1DbId,
     dayStart: times.dayStart,
     monthStart: times.monthStart,
     today: times.today,
@@ -211,12 +216,8 @@ async function collectMetrics(env: Env): Promise<MetricsResult> {
   };
 
   const [data, d1StorageBytes] = await Promise.all([
-    runGraphQLQuery(env.CLOUDFLARE_API_TOKEN, variables),
-    fetchD1StorageBytes(
-      env.CLOUDFLARE_ACCOUNT_ID,
-      env.CLOUDFLARE_API_TOKEN,
-      env.TARGET_D1_DB_ID
-    ),
+    runGraphQLQuery(token, variables),
+    fetchD1StorageBytes(accountId, token, envConfig.d1DbId),
   ]);
 
   const account = data.viewer.accounts[0];
@@ -288,7 +289,7 @@ function usageLine(
   return { text, isAlert: pct >= ALERT_THRESHOLD };
 }
 
-function buildDiscordPayload(metrics: MetricsResult): object {
+function buildDiscordPayload(label: string, metrics: MetricsResult): object {
   const { workers, d1, r2, durableObjects } = metrics;
 
   const errorIcon = workers.errorsLastHour > 0 ? "🔴" : "🟢";
@@ -316,7 +317,7 @@ function buildDiscordPayload(metrics: MetricsResult): object {
   return {
     embeds: [
       {
-        title: "📊 Cloudflare Free Tier Monitor",
+        title: `📊 Cloudflare Free Tier Monitor [${label}]`,
         description: lines.map((l) => l.text).join("\n"),
         color,
         footer: {
@@ -327,12 +328,12 @@ function buildDiscordPayload(metrics: MetricsResult): object {
   };
 }
 
-function buildErrorPayload(err: unknown): object {
+function buildErrorPayload(label: string, err: unknown): object {
   const message = err instanceof Error ? err.message : String(err);
   return {
     embeds: [
       {
-        title: "❌ cf-full-monitor: Fetch Error",
+        title: `❌ cf-full-monitor [${label}]: Fetch Error`,
         description: `\`\`\`\n${message}\n\`\`\``,
         color: 0xff0000,
         footer: { text: new Date().toUTCString() },
@@ -352,6 +353,41 @@ async function sendDiscord(webhookUrl: string, payload: object): Promise<void> {
   }
 }
 
+async function runForEnvironment(
+  accountId: string,
+  token: string,
+  envConfig: EnvironmentConfig
+): Promise<void> {
+  let payload: object;
+  try {
+    const metrics = await collectMetrics(accountId, token, envConfig);
+    payload = buildDiscordPayload(envConfig.label, metrics);
+  } catch (err) {
+    payload = buildErrorPayload(envConfig.label, err);
+  }
+  await sendDiscord(envConfig.webhookUrl, payload);
+}
+
+function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
+  return env.ENVIRONMENT_NAMES.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((name) => {
+      const prefix = name.toUpperCase();
+      const scriptName = env[`${prefix}_SCRIPT_NAME`];
+      const d1DbId = env[`${prefix}_D1_DB_ID`];
+      const webhookUrl = env[`${prefix}_DISCORD_WEBHOOK_URL`];
+      if (!scriptName || !d1DbId || !webhookUrl) {
+        throw new Error(
+          `Missing bindings for environment "${name}". ` +
+          `Expected: ${prefix}_SCRIPT_NAME, ${prefix}_D1_DB_ID, ${prefix}_DISCORD_WEBHOOK_URL`
+        );
+      }
+      const label = name.charAt(0).toUpperCase() + name.slice(1);
+      return { label, scriptName, d1DbId, webhookUrl };
+    });
+}
+
 // ---- Entrypoint ----
 
 export default {
@@ -360,13 +396,11 @@ export default {
     env: Env,
     _ctx: ExecutionContext
   ): Promise<void> {
-    let payload: object;
-    try {
-      const metrics = await collectMetrics(env);
-      payload = buildDiscordPayload(metrics);
-    } catch (err) {
-      payload = buildErrorPayload(err);
-    }
-    await sendDiscord(env.DISCORD_WEBHOOK_URL, payload);
+    const configs = parseEnvironmentConfigs(env);
+    await Promise.all(
+      configs.map((config) =>
+        runForEnvironment(env.CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_API_TOKEN, config)
+      )
+    );
   },
 } satisfies ExportedHandler<Env>;

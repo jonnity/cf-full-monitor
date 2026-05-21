@@ -1,9 +1,17 @@
 export interface Env {
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
-  DISCORD_WEBHOOK_URL: string;
-  TARGET_SCRIPT_NAME: string;
-  TARGET_D1_DB_ID: string;
+  // Comma-separated list of environment names, e.g. "staging,prod"
+  // Each name N must have N_SCRIPT_NAME, N_D1_DB_ID, N_DISCORD_WEBHOOK_URL bindings.
+  ENVIRONMENT_NAMES: string;
+  [key: string]: string;
+}
+
+export interface EnvironmentConfig {
+  label: string;
+  scriptName: string;
+  d1DbId: string;
+  webhookUrl: string;
 }
 
 export interface GraphQLResponse<T> {
