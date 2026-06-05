@@ -245,9 +245,9 @@ async function collectMetrics(
   );
 
   const doRequests = account.doMonth.reduce((s, g) => s + g.sum.requests, 0);
-  // wallTime is in ms; convert to GB-s assuming 128 MB DO memory
-  const doWallTimeMs = account.doMonth.reduce((s, g) => s + g.sum.wallTime, 0);
-  const doDurationGBs = (doWallTimeMs / 1_000) * (128 / 1_024);
+  // wallTime is in μs; convert to GB-s assuming 128 MB DO memory
+  const doWallTimeUs = account.doMonth.reduce((s, g) => s + g.sum.wallTime, 0);
+  const doDurationGBs = (doWallTimeUs / 1_000_000) * (128 / 1_024);
 
   return {
     workers: { requests: workersTodayRequests, errorsLastHour: workersLastHourErrors },

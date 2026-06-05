@@ -40,7 +40,7 @@ export interface R2StorageGroup {
 export interface DOGroup {
   sum: {
     requests: number;
-    wallTime: number; // milliseconds
+    wallTime: number; // microseconds
   };
 }
 
