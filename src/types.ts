@@ -4,7 +4,8 @@ export interface Env {
   // Comma-separated list of environment names, e.g. "staging,prod"
   // Each name N must have N_SCRIPT_NAME, N_D1_DB_ID, N_DISCORD_WEBHOOK_URL bindings.
   ENVIRONMENT_NAMES: string;
-  [key: string]: string;
+  METRICS_KV: KVNamespace;
+  [key: string]: string | KVNamespace;
 }
 
 export interface EnvironmentConfig {

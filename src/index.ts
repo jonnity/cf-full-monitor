@@ -353,19 +353,49 @@ async function sendDiscord(webhookUrl: string, payload: object): Promise<void> {
   }
 }
 
+function hasIncreased(prev: MetricsResult | null, curr: MetricsResult): boolean {
+  if (!prev) return true;
+  return (
+    curr.workers.requests > prev.workers.requests ||
+    curr.workers.errorsLastHour > prev.workers.errorsLastHour ||
+    curr.d1.readRows > prev.d1.readRows ||
+    curr.d1.writeRows > prev.d1.writeRows ||
+    curr.d1.storageBytes > prev.d1.storageBytes ||
+    curr.r2.classAOps > prev.r2.classAOps ||
+    curr.r2.classBOps > prev.r2.classBOps ||
+    curr.r2.storageBytes > prev.r2.storageBytes ||
+    curr.durableObjects.requests > prev.durableObjects.requests ||
+    curr.durableObjects.durationGBs > prev.durableObjects.durationGBs
+  );
+}
+
 async function runForEnvironment(
   accountId: string,
   token: string,
-  envConfig: EnvironmentConfig
+  envConfig: EnvironmentConfig,
+  kv: KVNamespace
 ): Promise<void> {
-  let payload: object;
+  const kvKey = `metrics:${envConfig.label}`;
+  let payload: object | null = null;
+
   try {
-    const metrics = await collectMetrics(accountId, token, envConfig);
-    payload = buildDiscordPayload(envConfig.label, metrics);
+    const [metrics, prev] = await Promise.all([
+      collectMetrics(accountId, token, envConfig),
+      kv.get<MetricsResult>(kvKey, "json"),
+    ]);
+
+    await kv.put(kvKey, JSON.stringify(metrics));
+
+    if (hasIncreased(prev, metrics)) {
+      payload = buildDiscordPayload(envConfig.label, metrics);
+    }
   } catch (err) {
     payload = buildErrorPayload(envConfig.label, err);
   }
-  await sendDiscord(envConfig.webhookUrl, payload);
+
+  if (payload) {
+    await sendDiscord(envConfig.webhookUrl, payload);
+  }
 }
 
 function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
@@ -374,9 +404,9 @@ function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
     .filter(Boolean)
     .map((name) => {
       const prefix = name.toUpperCase();
-      const scriptName = env[`${prefix}_SCRIPT_NAME`];
-      const d1DbId = env[`${prefix}_D1_DB_ID`];
-      const webhookUrl = env[`${prefix}_DISCORD_WEBHOOK_URL`];
+      const scriptName = env[`${prefix}_SCRIPT_NAME`] as string | undefined;
+      const d1DbId = env[`${prefix}_D1_DB_ID`] as string | undefined;
+      const webhookUrl = env[`${prefix}_DISCORD_WEBHOOK_URL`] as string | undefined;
       if (!scriptName || !d1DbId || !webhookUrl) {
         throw new Error(
           `Missing bindings for environment "${name}". ` +
@@ -399,7 +429,7 @@ export default {
     const configs = parseEnvironmentConfigs(env);
     await Promise.all(
       configs.map((config) =>
-        runForEnvironment(env.CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_API_TOKEN, config)
+        runForEnvironment(env.CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_API_TOKEN, config, env.METRICS_KV)
       )
     );
   },
