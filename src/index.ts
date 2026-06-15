@@ -353,19 +353,25 @@ async function sendDiscord(webhookUrl: string, payload: object): Promise<void> {
   }
 }
 
+// For counters that periodically reset (daily/monthly), if curr < prev a reset occurred.
+// In that case compare against 0 so post-reset usage (e.g. 2000 after reset from 5000) is detected.
+function counterBaseline(prev: number, curr: number): number {
+  return curr < prev ? 0 : prev;
+}
+
 function hasIncreased(prev: MetricsResult | null, curr: MetricsResult): boolean {
   if (!prev) return true;
   return (
-    curr.workers.requests > prev.workers.requests ||
-    curr.workers.errorsLastHour > prev.workers.errorsLastHour ||
-    curr.d1.readRows > prev.d1.readRows ||
-    curr.d1.writeRows > prev.d1.writeRows ||
+    curr.workers.requests > counterBaseline(prev.workers.requests, curr.workers.requests) ||
+    curr.workers.errorsLastHour > counterBaseline(prev.workers.errorsLastHour, curr.workers.errorsLastHour) ||
+    curr.d1.readRows > counterBaseline(prev.d1.readRows, curr.d1.readRows) ||
+    curr.d1.writeRows > counterBaseline(prev.d1.writeRows, curr.d1.writeRows) ||
     curr.d1.storageBytes > prev.d1.storageBytes ||
-    curr.r2.classAOps > prev.r2.classAOps ||
-    curr.r2.classBOps > prev.r2.classBOps ||
+    curr.r2.classAOps > counterBaseline(prev.r2.classAOps, curr.r2.classAOps) ||
+    curr.r2.classBOps > counterBaseline(prev.r2.classBOps, curr.r2.classBOps) ||
     curr.r2.storageBytes > prev.r2.storageBytes ||
-    curr.durableObjects.requests > prev.durableObjects.requests ||
-    curr.durableObjects.durationGBs > prev.durableObjects.durationGBs
+    curr.durableObjects.requests > counterBaseline(prev.durableObjects.requests, curr.durableObjects.requests) ||
+    curr.durableObjects.durationGBs > counterBaseline(prev.durableObjects.durationGBs, curr.durableObjects.durationGBs)
   );
 }
 
