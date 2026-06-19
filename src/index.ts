@@ -353,19 +353,52 @@ async function sendDiscord(webhookUrl: string, payload: object): Promise<void> {
   }
 }
 
+// For counters that periodically reset (daily/monthly), if curr < prev a reset occurred.
+// In that case compare against 0 so post-reset usage (e.g. 2000 after reset from 5000) is detected.
+function counterBaseline(prev: number, curr: number): number {
+  return curr < prev ? 0 : prev;
+}
+
+function hasIncreased(prev: MetricsResult | null, curr: MetricsResult): boolean {
+  if (!prev) return true;
+  // errorsLastHour is a rolling window, not a resetting counter: always notify on errors.
+  if (curr.workers.errorsLastHour > 0) return true;
+  return (
+    curr.workers.requests > counterBaseline(prev.workers.requests, curr.workers.requests) ||
+    curr.d1.readRows > counterBaseline(prev.d1.readRows, curr.d1.readRows) ||
+    curr.d1.writeRows > counterBaseline(prev.d1.writeRows, curr.d1.writeRows) ||
+    curr.d1.storageBytes > prev.d1.storageBytes ||
+    curr.r2.classAOps > counterBaseline(prev.r2.classAOps, curr.r2.classAOps) ||
+    curr.r2.classBOps > counterBaseline(prev.r2.classBOps, curr.r2.classBOps) ||
+    curr.r2.storageBytes > prev.r2.storageBytes ||
+    curr.durableObjects.requests > counterBaseline(prev.durableObjects.requests, curr.durableObjects.requests) ||
+    curr.durableObjects.durationGBs > counterBaseline(prev.durableObjects.durationGBs, curr.durableObjects.durationGBs)
+  );
+}
+
 async function runForEnvironment(
   accountId: string,
   token: string,
-  envConfig: EnvironmentConfig
+  envConfig: EnvironmentConfig,
+  kv: KVNamespace
 ): Promise<void> {
-  let payload: object;
+  const kvKey = `metrics:${envConfig.label}`;
+
   try {
-    const metrics = await collectMetrics(accountId, token, envConfig);
-    payload = buildDiscordPayload(envConfig.label, metrics);
+    const [metrics, prev] = await Promise.all([
+      collectMetrics(accountId, token, envConfig),
+      kv.get<MetricsResult>(kvKey, "json"),
+    ]);
+
+    // Send before persisting the baseline so a failed send is retried next run.
+    if (hasIncreased(prev, metrics)) {
+      await sendDiscord(envConfig.webhookUrl, buildDiscordPayload(envConfig.label, metrics));
+    }
+
+    await kv.put(kvKey, JSON.stringify(metrics));
   } catch (err) {
-    payload = buildErrorPayload(envConfig.label, err);
+    await sendDiscord(envConfig.webhookUrl, buildErrorPayload(envConfig.label, err));
   }
-  await sendDiscord(envConfig.webhookUrl, payload);
 }
 
 function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
@@ -374,9 +407,9 @@ function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
     .filter(Boolean)
     .map((name) => {
       const prefix = name.toUpperCase();
-      const scriptName = env[`${prefix}_SCRIPT_NAME`];
-      const d1DbId = env[`${prefix}_D1_DB_ID`];
-      const webhookUrl = env[`${prefix}_DISCORD_WEBHOOK_URL`];
+      const scriptName = env[`${prefix}_SCRIPT_NAME`] as string | undefined;
+      const d1DbId = env[`${prefix}_D1_DB_ID`] as string | undefined;
+      const webhookUrl = env[`${prefix}_DISCORD_WEBHOOK_URL`] as string | undefined;
       if (!scriptName || !d1DbId || !webhookUrl) {
         throw new Error(
           `Missing bindings for environment "${name}". ` +
@@ -399,7 +432,7 @@ export default {
     const configs = parseEnvironmentConfigs(env);
     await Promise.all(
       configs.map((config) =>
-        runForEnvironment(env.CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_API_TOKEN, config)
+        runForEnvironment(env.CLOUDFLARE_ACCOUNT_ID, env.CLOUDFLARE_API_TOKEN, config, env.METRICS_KV)
       )
     );
   },

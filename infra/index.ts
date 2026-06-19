@@ -1,5 +1,5 @@
 import alchemy from "alchemy";
-import { Worker } from "alchemy/cloudflare";
+import { Worker, KVNamespace } from "alchemy/cloudflare";
 
 // Run: tsx infra/index.ts          → deploy / update
 //      tsx infra/index.ts --destroy → tear down
@@ -39,6 +39,8 @@ const envBindings = Object.fromEntries(
     })
 );
 
+const metricsKV = await KVNamespace("cf-monitor-metrics");
+
 await Worker("cf-full-monitor", {
   name: "cf-full-monitor",
   entrypoint: new URL("../src/index.ts", import.meta.url).pathname,
@@ -47,6 +49,7 @@ await Worker("cf-full-monitor", {
     CLOUDFLARE_ACCOUNT_ID: alchemy.secret(accountId),
     CLOUDFLARE_API_TOKEN: alchemy.secret(apiToken),
     ENVIRONMENT_NAMES: environmentNames,
+    METRICS_KV: metricsKV,
     ...envBindings,
   },
 });
