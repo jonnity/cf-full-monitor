@@ -361,9 +361,10 @@ function counterBaseline(prev: number, curr: number): number {
 
 function hasIncreased(prev: MetricsResult | null, curr: MetricsResult): boolean {
   if (!prev) return true;
+  // errorsLastHour is a rolling window, not a resetting counter: always notify on errors.
+  if (curr.workers.errorsLastHour > 0) return true;
   return (
     curr.workers.requests > counterBaseline(prev.workers.requests, curr.workers.requests) ||
-    curr.workers.errorsLastHour > counterBaseline(prev.workers.errorsLastHour, curr.workers.errorsLastHour) ||
     curr.d1.readRows > counterBaseline(prev.d1.readRows, curr.d1.readRows) ||
     curr.d1.writeRows > counterBaseline(prev.d1.writeRows, curr.d1.writeRows) ||
     curr.d1.storageBytes > prev.d1.storageBytes ||
@@ -382,7 +383,6 @@ async function runForEnvironment(
   kv: KVNamespace
 ): Promise<void> {
   const kvKey = `metrics:${envConfig.label}`;
-  let payload: object | null = null;
 
   try {
     const [metrics, prev] = await Promise.all([
@@ -390,17 +390,14 @@ async function runForEnvironment(
       kv.get<MetricsResult>(kvKey, "json"),
     ]);
 
-    await kv.put(kvKey, JSON.stringify(metrics));
-
+    // Send before persisting the baseline so a failed send is retried next run.
     if (hasIncreased(prev, metrics)) {
-      payload = buildDiscordPayload(envConfig.label, metrics);
+      await sendDiscord(envConfig.webhookUrl, buildDiscordPayload(envConfig.label, metrics));
     }
-  } catch (err) {
-    payload = buildErrorPayload(envConfig.label, err);
-  }
 
-  if (payload) {
-    await sendDiscord(envConfig.webhookUrl, payload);
+    await kv.put(kvKey, JSON.stringify(metrics));
+  } catch (err) {
+    await sendDiscord(envConfig.webhookUrl, buildErrorPayload(envConfig.label, err));
   }
 }
 
