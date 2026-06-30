@@ -41,7 +41,12 @@ export interface R2StorageGroup {
 export interface DOGroup {
   sum: {
     requests: number;
-    wallTime: number; // microseconds
+  };
+}
+
+export interface DODurationGroup {
+  sum: {
+    duration: number; // GB-s (billed Durable Objects duration)
   };
 }
 
@@ -52,6 +57,7 @@ export interface AccountData {
   r2OpsMonth: R2OpsGroup[];
   r2Storage: R2StorageGroup[];
   doMonth: DOGroup[];
+  doDurationMonth: DODurationGroup[];
 }
 
 export interface QueryData {
