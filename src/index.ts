@@ -131,7 +131,16 @@ const MONITOR_QUERY = `
             date_leq: $today
           }
         ) {
-          sum { requests wallTime }
+          sum { requests }
+        }
+        doDurationMonth: durableObjectsPeriodicGroups(
+          limit: 10000
+          filter: {
+            date_geq: $monthStart
+            date_leq: $today
+          }
+        ) {
+          sum { duration }
         }
       }
     }
@@ -245,9 +254,11 @@ async function collectMetrics(
   );
 
   const doRequests = account.doMonth.reduce((s, g) => s + g.sum.requests, 0);
-  // wallTime is in μs; convert to GB-s assuming 128 MB DO memory
-  const doWallTimeUs = account.doMonth.reduce((s, g) => s + g.sum.wallTime, 0);
-  const doDurationGBs = (doWallTimeUs / 1_000_000) * (128 / 1_024);
+  // Billed DO Duration is the `duration` metric from durableObjectsPeriodicGroups,
+  // already expressed in GB-s. Do NOT derive it from invocationsAdaptive.wallTime:
+  // wallTime counts the entire open lifetime of a WebSocket (including hibernation,
+  // which is not billed), so it overcounts billed duration by ~20x for hibernating DOs.
+  const doDurationGBs = account.doDurationMonth.reduce((s, g) => s + g.sum.duration, 0);
 
   return {
     workers: { requests: workersTodayRequests, errorsLastHour: workersLastHourErrors },
