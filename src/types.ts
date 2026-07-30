@@ -3,6 +3,8 @@ export interface Env {
   CLOUDFLARE_API_TOKEN: string;
   // Comma-separated list of environment names, e.g. "staging,prod"
   // Each name N must have N_SCRIPT_NAME, N_D1_DB_ID, N_DISCORD_WEBHOOK_URL bindings.
+  // N_ZONE_ID and N_HOSTNAME are optional; when both are set, the HTTP status 5xx
+  // check (httpRequestsAdaptiveGroups) is enabled for that environment.
   ENVIRONMENT_NAMES: string;
   METRICS_KV: KVNamespace;
   [key: string]: string | KVNamespace;
@@ -13,6 +15,10 @@ export interface EnvironmentConfig {
   scriptName: string;
   d1DbId: string;
   webhookUrl: string;
+  // Optional: enables the zone-level HTTP status 5xx check (httpRequestsAdaptiveGroups).
+  // Both must be set together; either missing disables the check for this environment.
+  zoneId?: string;
+  hostname?: string;
 }
 
 export interface GraphQLResponse<T> {
@@ -50,6 +56,10 @@ export interface DODurationGroup {
   };
 }
 
+export interface HttpErrorGroup {
+  sum: { requests: number };
+}
+
 export interface AccountData {
   workersToday: WorkersGroup[];
   workersLastHour: WorkersGroup[];
@@ -60,9 +70,15 @@ export interface AccountData {
   doDurationMonth: DODurationGroup[];
 }
 
+export interface ZoneData {
+  httpErrorsLastHour: HttpErrorGroup[];
+}
+
 export interface QueryData {
   viewer: {
     accounts: AccountData[];
+    // Present only when the query was sent with $hasHttpZone: true.
+    zones?: ZoneData[];
   };
 }
 
@@ -71,6 +87,10 @@ export interface MetricsResult {
     requests: number;
     errorsLastHour: number;
   };
+  // null when the environment has no zoneId/hostname configured (check disabled).
+  http: {
+    errorsLastHour: number;
+  } | null;
   d1: {
     readRows: number;
     writeRows: number;

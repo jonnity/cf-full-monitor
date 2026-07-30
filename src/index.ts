@@ -72,8 +72,24 @@ const MONITOR_QUERY = `
     $today: String!
     $now: String!
     $oneHourAgo: String!
+    $hasHttpZone: Boolean!
+    $zoneTag: String
+    $hostname: String
   ) {
     viewer {
+      zones(filter: { zoneTag: $zoneTag }) @include(if: $hasHttpZone) {
+        httpErrorsLastHour: httpRequestsAdaptiveGroups(
+          limit: 1
+          filter: {
+            datetime_geq: $oneHourAgo
+            datetime_leq: $now
+            clientRequestHTTPHost: $hostname
+            edgeResponseStatus_geq: 500
+          }
+        ) {
+          sum { requests }
+        }
+      }
       accounts(filter: { accountTag: $accountId }) {
         workersToday: workersInvocationsAdaptive(
           limit: 10000
@@ -149,7 +165,7 @@ const MONITOR_QUERY = `
 
 async function runGraphQLQuery(
   token: string,
-  variables: Record<string, string>
+  variables: Record<string, string | boolean | null>
 ): Promise<QueryData> {
   const res = await fetch(GRAPHQL_URL, {
     method: "POST",
@@ -213,6 +229,7 @@ async function collectMetrics(
   envConfig: EnvironmentConfig
 ): Promise<MetricsResult> {
   const times = buildTimeRange();
+  const hasHttpZone = Boolean(envConfig.zoneId && envConfig.hostname);
   const variables = {
     accountId,
     scriptName: envConfig.scriptName,
@@ -222,6 +239,9 @@ async function collectMetrics(
     today: times.today,
     now: times.now,
     oneHourAgo: times.oneHourAgo,
+    hasHttpZone,
+    zoneTag: envConfig.zoneId ?? null,
+    hostname: envConfig.hostname ?? null,
   };
 
   const [data, d1StorageBytes] = await Promise.all([
@@ -260,8 +280,13 @@ async function collectMetrics(
   // which is not billed), so it overcounts billed duration by ~20x for hibernating DOs.
   const doDurationGBs = account.doDurationMonth.reduce((s, g) => s + g.sum.duration, 0);
 
+  const httpErrorsLastHour = hasHttpZone
+    ? (data.viewer.zones?.[0]?.httpErrorsLastHour.reduce((s, g) => s + g.sum.requests, 0) ?? 0)
+    : null;
+
   return {
     workers: { requests: workersTodayRequests, errorsLastHour: workersLastHourErrors },
+    http: httpErrorsLastHour === null ? null : { errorsLastHour: httpErrorsLastHour },
     d1: { readRows: d1ReadRows, writeRows: d1WriteRows, storageBytes: d1StorageBytes },
     r2: { classAOps, classBOps, storageBytes: r2StorageBytes },
     durableObjects: { requests: doRequests, durationGBs: doDurationGBs },
@@ -301,17 +326,28 @@ function usageLine(
 }
 
 function buildDiscordPayload(label: string, metrics: MetricsResult): object {
-  const { workers, d1, r2, durableObjects } = metrics;
+  const { workers, http, d1, r2, durableObjects } = metrics;
 
+  // Worker invocation errors: uncaught exceptions / resource limits inside the Worker
+  // runtime. Does NOT include a Response the app deliberately returns with status 500
+  // (e.g. after catching and logging an error) — the "HTTP 5xx" line below covers that.
   const errorIcon = workers.errorsLastHour > 0 ? "🔴" : "🟢";
   const errorLine: UsageLine = {
-    text: `${errorIcon} **Worker 5xx (last 1h)**: ${fmt(workers.errorsLastHour)}`,
+    text: `${errorIcon} **Worker invocation errors (last 1h)**: ${fmt(workers.errorsLastHour)}`,
     isAlert: workers.errorsLastHour > 0,
   };
 
   const lines: UsageLine[] = [
     usageLine("Workers Requests (today)", workers.requests, LIMITS.workers.requests),
     errorLine,
+    ...(http
+      ? [
+          {
+            text: `${http.errorsLastHour > 0 ? "🔴" : "🟢"} **HTTP 5xx (edge, last 1h)**: ${fmt(http.errorsLastHour)}`,
+            isAlert: http.errorsLastHour > 0,
+          } satisfies UsageLine,
+        ]
+      : []),
     usageLine("D1 Read Rows (today)", d1.readRows, LIMITS.d1.readRows),
     usageLine("D1 Write Rows (today)", d1.writeRows, LIMITS.d1.writeRows),
     usageLine("D1 Storage", d1.storageBytes, LIMITS.d1.storageBytes, fmtBytes),
@@ -374,6 +410,7 @@ function hasIncreased(prev: MetricsResult | null, curr: MetricsResult): boolean 
   if (!prev) return true;
   // errorsLastHour is a rolling window, not a resetting counter: always notify on errors.
   if (curr.workers.errorsLastHour > 0) return true;
+  if (curr.http && curr.http.errorsLastHour > 0) return true;
   return (
     curr.workers.requests > counterBaseline(prev.workers.requests, curr.workers.requests) ||
     curr.d1.readRows > counterBaseline(prev.d1.readRows, curr.d1.readRows) ||
@@ -427,8 +464,18 @@ function parseEnvironmentConfigs(env: Env): EnvironmentConfig[] {
           `Expected: ${prefix}_SCRIPT_NAME, ${prefix}_D1_DB_ID, ${prefix}_DISCORD_WEBHOOK_URL`
         );
       }
+      // Optional: HTTP status 5xx check via httpRequestsAdaptiveGroups.
+      // Both must be set together, or the check stays disabled for this environment.
+      const zoneId = env[`${prefix}_ZONE_ID`] as string | undefined;
+      const hostname = env[`${prefix}_HOSTNAME`] as string | undefined;
       const label = name.charAt(0).toUpperCase() + name.slice(1);
-      return { label, scriptName, d1DbId, webhookUrl };
+      return {
+        label,
+        scriptName,
+        d1DbId,
+        webhookUrl,
+        ...(zoneId && hostname ? { zoneId, hostname } : {}),
+      };
     });
 }
 
