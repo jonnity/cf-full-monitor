@@ -12,6 +12,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function optionalEnv(name: string): string | undefined {
+  return process.env[name] || undefined;
+}
+
 const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
 const apiToken = requireEnv("CLOUDFLARE_API_TOKEN");
 const environmentNames = requireEnv("ENVIRONMENT_NAMES");
@@ -31,10 +35,16 @@ const envBindings = Object.fromEntries(
     .filter(Boolean)
     .flatMap((name) => {
       const prefix = name.toUpperCase();
+      // ZONE_ID/HOSTNAME are optional: they enable the HTTP status 5xx check
+      // (httpRequestsAdaptiveGroups) for this environment when both are set.
+      const zoneId = optionalEnv(`${prefix}_ZONE_ID`);
+      const hostname = optionalEnv(`${prefix}_HOSTNAME`);
       return [
         [`${prefix}_SCRIPT_NAME`, requireEnv(`${prefix}_SCRIPT_NAME`)],
         [`${prefix}_D1_DB_ID`, alchemy.secret(requireEnv(`${prefix}_D1_DB_ID`))],
         [`${prefix}_DISCORD_WEBHOOK_URL`, alchemy.secret(requireEnv(`${prefix}_DISCORD_WEBHOOK_URL`))],
+        ...(zoneId ? [[`${prefix}_ZONE_ID`, zoneId] as const] : []),
+        ...(hostname ? [[`${prefix}_HOSTNAME`, hostname] as const] : []),
       ];
     })
 );

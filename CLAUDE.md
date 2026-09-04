@@ -23,3 +23,6 @@ npm run destroy   # 削除
 - **Account → Workers KV Storage → Edit**（メトリクス保存用 KV namespace `cf-monitor-metrics` の作成・更新）
 - **Account → Workers Scripts → Edit**（Worker 本体のデプロイ）
 - Analytics 取得用に GraphQL/Analytics の Read 権限
+- `*_ZONE_ID` / `*_HOSTNAME`（HTTPステータスコードベースの5xx検知）を使う環境がある場合は、追加で
+  **Zone → Analytics → Read**（対象ゾーンスコープ）が必要。上記のAccountレベルAnalytics権限だけでは
+  `httpRequestsAdaptiveGroups`（`viewer.zones` 配下）へのアクセスに不足し、GraphQLエラーになる
