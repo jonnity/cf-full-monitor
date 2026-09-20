@@ -57,7 +57,10 @@ export interface DODurationGroup {
 }
 
 export interface HttpErrorGroup {
-  sum: { requests: number };
+  // Number of sampled requests in the group (httpRequestsAdaptiveGroups has no sum.requests).
+  count: number;
+  // How many real requests each sample stands for; 1 when the data is unsampled.
+  avg?: { sampleInterval: number };
 }
 
 export interface AccountData {

@@ -2,6 +2,7 @@ import type {
   Env,
   EnvironmentConfig,
   GraphQLResponse,
+  HttpErrorGroup,
   QueryData,
   R2OpsGroup,
   MetricsResult,
@@ -64,6 +65,11 @@ function buildTimeRange(): TimeRange {
 
 // Cloudflare's GraphQL API rejects directives (`@include` etc. → "directives not supported"),
 // so the zone block is spliced into the query text only when the HTTP 5xx check is enabled.
+//
+// httpRequestsAdaptiveGroups has no `sum { requests }` (that exists on the non-adaptive
+// httpRequests1hGroups) — requesting it fails the whole query with
+// `unknown field "requests"`. The request count is the top-level `count`, and because
+// the dataset is adaptively sampled it must be scaled by `avg { sampleInterval }`.
 const HTTP_ZONE_VARIABLES = `
     $zoneTag: String!
     $hostname: String!`;
@@ -79,7 +85,8 @@ const HTTP_ZONE_SELECTION = `
             edgeResponseStatus_geq: 500
           }
         ) {
-          sum { requests }
+          count
+          avg { sampleInterval }
         }
       }`;
 
@@ -231,6 +238,13 @@ function classifyR2Ops(groups: R2OpsGroup[]): {
   return { classAOps, classBOps };
 }
 
+// httpRequestsAdaptiveGroups is sampled: `count` is the number of sampled requests and
+// `avg.sampleInterval` how many real requests each sample represents (1 = unsampled).
+function estimateSampledCount(group: HttpErrorGroup): number {
+  const interval = group.avg?.sampleInterval;
+  return Math.round(group.count * (interval && interval > 0 ? interval : 1));
+}
+
 async function collectMetrics(
   accountId: string,
   token: string,
@@ -288,7 +302,10 @@ async function collectMetrics(
   const doDurationGBs = account.doDurationMonth.reduce((s, g) => s + g.sum.duration, 0);
 
   const httpErrorsLastHour = hasHttpZone
-    ? (data.viewer.zones?.[0]?.httpErrorsLastHour.reduce((s, g) => s + g.sum.requests, 0) ?? 0)
+    ? (data.viewer.zones?.[0]?.httpErrorsLastHour.reduce(
+        (s, g) => s + estimateSampledCount(g),
+        0
+      ) ?? 0)
     : null;
 
   return {
