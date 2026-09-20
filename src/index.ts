@@ -62,22 +62,14 @@ function buildTimeRange(): TimeRange {
   };
 }
 
-const MONITOR_QUERY = `
-  query MonitorQuery(
-    $accountId: String!
-    $scriptName: String!
-    $dbId: String!
-    $dayStart: String!
-    $monthStart: String!
-    $today: String!
-    $now: String!
-    $oneHourAgo: String!
-    $hasHttpZone: Boolean!
-    $zoneTag: String
-    $hostname: String
-  ) {
-    viewer {
-      zones(filter: { zoneTag: $zoneTag }) @include(if: $hasHttpZone) {
+// Cloudflare's GraphQL API rejects directives (`@include` etc. → "directives not supported"),
+// so the zone block is spliced into the query text only when the HTTP 5xx check is enabled.
+const HTTP_ZONE_VARIABLES = `
+    $zoneTag: String!
+    $hostname: String!`;
+
+const HTTP_ZONE_SELECTION = `
+      zones(filter: { zoneTag: $zoneTag }) {
         httpErrorsLastHour: httpRequestsAdaptiveGroups(
           limit: 1
           filter: {
@@ -89,7 +81,21 @@ const MONITOR_QUERY = `
         ) {
           sum { requests }
         }
-      }
+      }`;
+
+function buildMonitorQuery(hasHttpZone: boolean): string {
+  return `
+  query MonitorQuery(
+    $accountId: String!
+    $scriptName: String!
+    $dbId: String!
+    $dayStart: String!
+    $monthStart: String!
+    $today: String!
+    $now: String!
+    $oneHourAgo: String!${hasHttpZone ? HTTP_ZONE_VARIABLES : ""}
+  ) {
+    viewer {${hasHttpZone ? HTTP_ZONE_SELECTION : ""}
       accounts(filter: { accountTag: $accountId }) {
         workersToday: workersInvocationsAdaptive(
           limit: 10000
@@ -162,10 +168,12 @@ const MONITOR_QUERY = `
     }
   }
 `;
+}
 
 async function runGraphQLQuery(
   token: string,
-  variables: Record<string, string | boolean | null>
+  hasHttpZone: boolean,
+  variables: Record<string, string>
 ): Promise<QueryData> {
   const res = await fetch(GRAPHQL_URL, {
     method: "POST",
@@ -173,7 +181,7 @@ async function runGraphQLQuery(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ query: MONITOR_QUERY, variables }),
+    body: JSON.stringify({ query: buildMonitorQuery(hasHttpZone), variables }),
   });
 
   if (!res.ok) {
@@ -229,8 +237,9 @@ async function collectMetrics(
   envConfig: EnvironmentConfig
 ): Promise<MetricsResult> {
   const times = buildTimeRange();
-  const hasHttpZone = Boolean(envConfig.zoneId && envConfig.hostname);
-  const variables = {
+  const { zoneId, hostname } = envConfig;
+  const hasHttpZone = Boolean(zoneId && hostname);
+  const variables: Record<string, string> = {
     accountId,
     scriptName: envConfig.scriptName,
     dbId: envConfig.d1DbId,
@@ -239,13 +248,11 @@ async function collectMetrics(
     today: times.today,
     now: times.now,
     oneHourAgo: times.oneHourAgo,
-    hasHttpZone,
-    zoneTag: envConfig.zoneId ?? null,
-    hostname: envConfig.hostname ?? null,
+    ...(zoneId && hostname ? { zoneTag: zoneId, hostname } : {}),
   };
 
   const [data, d1StorageBytes] = await Promise.all([
-    runGraphQLQuery(token, variables),
+    runGraphQLQuery(token, hasHttpZone, variables),
     fetchD1StorageBytes(accountId, token, envConfig.d1DbId),
   ]);
 

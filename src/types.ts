@@ -77,7 +77,7 @@ export interface ZoneData {
 export interface QueryData {
   viewer: {
     accounts: AccountData[];
-    // Present only when the query was sent with $hasHttpZone: true.
+    // Present only when the query was built with the HTTP zone block (zoneId + hostname set).
     zones?: ZoneData[];
   };
 }
