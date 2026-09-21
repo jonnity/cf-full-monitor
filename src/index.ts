@@ -79,7 +79,7 @@ const HTTP_ZONE_SELECTION = `
             edgeResponseStatus_geq: 500
           }
         ) {
-          sum { requests }
+          count
         }
       }`;
 
@@ -288,7 +288,7 @@ async function collectMetrics(
   const doDurationGBs = account.doDurationMonth.reduce((s, g) => s + g.sum.duration, 0);
 
   const httpErrorsLastHour = hasHttpZone
-    ? (data.viewer.zones?.[0]?.httpErrorsLastHour.reduce((s, g) => s + g.sum.requests, 0) ?? 0)
+    ? (data.viewer.zones?.[0]?.httpErrorsLastHour.reduce((s, g) => s + g.count, 0) ?? 0)
     : null;
 
   return {

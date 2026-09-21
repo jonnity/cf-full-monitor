@@ -57,7 +57,8 @@ export interface DODurationGroup {
 }
 
 export interface HttpErrorGroup {
-  sum: { requests: number };
+  // httpRequestsAdaptiveGroups exposes the request count as `count`; its `sum` has no `requests`.
+  count: number;
 }
 
 export interface AccountData {
